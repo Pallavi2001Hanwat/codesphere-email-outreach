@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CodeSphere Outreach</title>
+<link rel="stylesheet" href="style.css">
+<main>
+    <header><img src="logo.png" alt="CodeSphere"><small>LOCAL WORKSPACE</small></header>
+    <h1>Email outreach</h1>
+    <p>Upload, personalize and review your Shopify outreach campaign.</p>
+    <section>
+        <h2>1. Import leads</h2>
+        <form id="upload"><input type="file" name="sheet" accept=".xlsx" required><button>Upload Excel</button></form>
+        <p class="muted">Required columns: BrandName, Email. Optional: Audit sent.</p>
+    </section>
+    <section>
+        <h2>2. Review &amp; send</h2>
+        <div id="stats"></div>
+        <p><label><input type="checkbox" id="confirm"> I have permission or a lawful basis to contact these recipients
+                and have excluded opt-outs.</label></p><button id="start" disabled>Start sending</button> <button
+            id="stop" disabled>Stop after current email</button>
+        <p id="notice" role="status"></p>
+        <div class="scroll">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Brand</th>
+                        <th>Email</th>
+                        <th>Status</th>
+                        <th>Preview</th>
+                    </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+            </table>
+        </div>
+    </section>
+    <dialog id="preview"><button id="close">Close</button>
+        <h3 id="subject"></h3><iframe id="body" sandbox title="Email preview"></iframe>
+    </dialog>
+</main>
+<script src="app.js"></script>
+
+</html>
