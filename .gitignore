@@ -7,3 +7,6 @@ history.json
 *.xls
 *.csv
 *.log
+credentials.json
+client_secret*.json
+token.json
