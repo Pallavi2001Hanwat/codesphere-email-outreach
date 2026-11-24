@@ -3,6 +3,7 @@ import express from 'express';
 import multer from 'multer';
 import ExcelJS from 'exceljs';
 import path from 'node:path';
+import fs from 'node:fs';
 import crypto from 'node:crypto';
 import { message } from './template.js';
 import { sendEmail } from './gmail.js';
@@ -68,7 +69,19 @@ app.use(express.static('public'));
 let rows = [];
 let running = false;
 let stop = false;
-let history = new Map();
+const historyPath = path.resolve(process.env.HISTORY_PATH || 'history.json');
+fs.mkdirSync(path.dirname(historyPath), { recursive: true });
+const history = new Map(
+    fs.existsSync(historyPath) ? JSON.parse(fs.readFileSync(historyPath, 'utf8')) : []
+);
+
+function record(email, entry) {
+    const next = new Map(history).set(email, entry);
+    const temporaryPath = historyPath + '.tmp';
+    fs.writeFileSync(temporaryPath, JSON.stringify([...next]), { mode: 0o600 });
+    fs.renameSync(temporaryPath, historyPath);
+    history.set(email, entry);
+}
 
 const norm = s => String(s).trim().toLowerCase();
 
@@ -77,15 +90,15 @@ const valid = email =>
     email.length <= 254 &&
     !email.includes('..');
 
-const day = () => new Date().toISOString().slice(0, 10);
+const day = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Kolkata' }).format(new Date());
 
 const limit = Math.max(
     1,
-    Math.min(100, Number(process.env.DAILY_LIMIT) || 15)
+    Math.min(100, Number(process.env.DAILY_LIMIT) || 5)
 );
 
 const used = () =>
-    [...history.values()].filter(x => x.day === day()).length;
+    [...history.values()].filter(x => x.day === day() && x.attempted).length;
 
 // Sending status
 app.get('/api/status', (req, res) => {
@@ -129,6 +142,8 @@ app.post('/api/upload', upload.single('sheet'), async (req, res) => {
         const bi = headers.indexOf('brandname');
         const ei = headers.indexOf('email');
         const ai = headers.indexOf('auditsent');
+        const oi = headers.indexOf('observation');
+        const si = headers.indexOf('suggestion');
 
         if (bi < 1 || ei < 1) {
             throw new Error('Required headers: BrandName and Email');
@@ -145,10 +160,14 @@ app.post('/api/upload', upload.single('sheet'), async (req, res) => {
 
             if (!brand && !email) return;
 
+            const observation = oi > 0 ? row.getCell(oi).text.trim() : '';
+            const suggestion = si > 0 ? row.getCell(si).text.trim() : '';
             let status = 'Ready';
 
             if (!brand || /[\r\n]/.test(brand) || !valid(email)) {
                 status = 'Invalid';
+            } else if (history.get(email)?.suppression) {
+                status = history.get(email).suppression;
             } else if (seen.has(email) || history.has(email)) {
                 status = 'Duplicate / previously attempted';
             } else if (
@@ -158,12 +177,15 @@ app.post('/api/upload', upload.single('sheet'), async (req, res) => {
                 )
             ) {
                 status = 'Already audited';
+            } else if (!observation || !suggestion) {
+                status = 'Needs personalization';
             }
 
             seen.add(email);
-            next.push({ id: i, brand, email, status });
+            next.push({ id: i, brand, email, observation, suggestion, status });
         });
 
+        if (running) throw new Error('Sending in progress');
         rows = next;
 
         res.json({ count: rows.length });
@@ -181,15 +203,25 @@ app.get('/api/preview/:id', (req, res) => {
 
     if (!row) return res.sendStatus(404);
 
-    const mail = message(row.brand);
+    if (!row.observation || !row.suggestion) {
+        return res.status(400).json({ error: 'Add Observation and Suggestion in Excel first.' });
+    }
 
-    res.json({
-        ...mail,
-        html: mail.html.replace(
-            'cid:signature-logo',
-            '/logo.png'
-        )
-    });
+    res.json(message(row));
+});
+
+app.post('/api/suppress', (req, res) => {
+    const email = norm(req.body.email || '');
+    const suppression = req.body.reason;
+    if (!valid(email) || !['Permanent bounce', 'Opted out'].includes(suppression)) {
+        return res.status(400).json({ error: 'Enter a valid email and suppression reason.' });
+    }
+
+    record(email, { ...history.get(email), suppression });
+    for (const row of rows) {
+        if (row.email === email) row.status = suppression;
+    }
+    res.json({ ok: true });
 });
 
 // Stop sending
@@ -237,39 +269,30 @@ app.post('/api/start', async (req, res) => {
                 history.has(row.email)
             ) continue;
 
+            record(row.email, { day: day(), attempted: true, status: 'Attempted' });
             row.status = 'Sending';
-
-            history.set(row.email, {
-                day: day(),
-                status: 'Attempted'
-            });
 
             try {
                 const result = await sendEmail({
                     from: {
-                        name: 'Leena | CodeSphere Innovations',
+                        name: (process.env.SENDER_NAME?.trim() || 'Pallavi') + ' | CodeSphere Innovations',
                         address: process.env.GMAIL_USER
                     },
                     to: row.email,
-                    ...message(row.brand),
-                    attachments: [{
-                        filename: 'logo.png',
-                        path: path.resolve('public/logo.png'),
-                        cid: 'signature-logo'
-                    }]
+                    ...message(row)
                 });
 
                 if (!result.data.id) {
                     throw new Error('Gmail did not confirm submission');
                 }
 
-                row.status = 'Sent';
-                history.get(row.email).status = 'Sent';
+                const entry = history.get(row.email);
+                record(row.email, { ...entry, status: 'Submitted to Gmail', messageId: result.data.id });
+                row.status = entry.suppression || 'Submitted to Gmail';
 
             } catch (error) {
-                row.status = 'Failed (not retried)';
+                row.status = history.get(row.email).suppression || 'Failed / uncertain';
                 row.error = error.message;
-                history.get(row.email).status = 'Failed / uncertain';
 
                 if (
                     /invalid_grant|invalid_client/i.test(error.message) ||
@@ -287,6 +310,8 @@ app.post('/api/start', async (req, res) => {
                 )
             );
         }
+    } catch (error) {
+        console.error('Campaign stopped:', error.message);
     } finally {
         running = false;
     }

@@ -11,7 +11,7 @@
     <section>
         <h2>1. Import leads</h2>
         <form id="upload"><input type="file" name="sheet" accept=".xlsx" required><button>Upload Excel</button></form>
-        <p class="muted">Required columns: BrandName, Email. Optional: Audit sent.</p>
+        <p class="muted">Required columns: BrandName, Email, Observation, Suggestion. Optional: Audit sent.</p>
     </section>
     <section>
         <h2>2. Review &amp; send</h2>
@@ -34,8 +34,19 @@
             </table>
         </div>
     </section>
+    <section>
+        <h2>3. Exclude an address</h2>
+        <form id="suppress">
+            <label>Email <input type="email" name="email" required></label>
+            <label>Reason <select name="reason">
+                <option>Permanent bounce</option>
+                <option>Opted out</option>
+            </select></label>
+            <button>Exclude address</button>
+        </form>
+    </section>
     <dialog id="preview"><button id="close">Close</button>
-        <h3 id="subject"></h3><iframe id="body" sandbox title="Email preview"></iframe>
+        <h3 id="subject"></h3><pre id="body" style="white-space: pre-wrap; overflow-wrap: anywhere"></pre>
     </dialog>
 </main>
 <script src="app.js"></script>
